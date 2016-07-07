@@ -159,7 +159,7 @@ find_section (char *name)
                                                                     \
     for (; i < sec_num; i++)                                        \
       if (! strcmp(vaddr_shst + sha_##A[i].sh_name, name)) {        \
-        printf("Section name:\t\t\t%s\n", name);                  \
+        printf("Section name:\t\t\t%s\n", name);                    \
         return i;                                                   \
       }                                                             \
                                                                     \
