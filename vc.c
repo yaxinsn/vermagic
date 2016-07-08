@@ -3,6 +3,7 @@
 // Writed by zet (feqin1023 AT gmail.com)
 //=-------------------------------------------------------------------------=//
 
+#include <ctype.h>
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -45,18 +46,20 @@ static char *vaddr_shst;
 static int file;
 // file state buffer
 static struct stat sb;
+// 
+static int had = 0;
 
 ///
-static int
+static void
 usage (FILE *stream)
 {
   fprintf(stream, "Usage: bin <option <+new-value>(s)> <module-name>\n");
   fprintf(stream, " Raed and set vermagic and crc of module\n");
   fprintf(stream, " Opthons are:\n");
-  fprintf(stream, "  -v\t\t\t\tCheck vermgaic.\n");
-  fprintf(stream, "  -v +new-value\t\tSet vermagiv.\n");
-  fprintf(stream, "  -c\t\t\t\tCheck crc.\n");
-  fprintf(stream, "  -c +new-value\t\tSet crc.\n");
+  fprintf(stream, "  -v\t\t\t\t\tCheck vermgaic.\n");
+  fprintf(stream, "  -v +new-value\t\t\t\tSet vermagiv.\n");
+  fprintf(stream, "  -c\t\t\t\t\tCheck crc.\n");
+  fprintf(stream, "  -c {\"+'{'name, no-zero-value'}'\"}\tSet crc.\n");
 
   exit(stream == stdout ? EXIT_SUCCESS : EXIT_FAILURE);
 }
@@ -159,7 +162,7 @@ find_section (char *name)
                                                                     \
     for (; i < sec_num; i++)                                        \
       if (! strcmp(vaddr_shst + sha_##A[i].sh_name, name)) {        \
-        printf("Section name:\t\t\t%s\n", name);                  \
+        printf("Section name:\t\t\t%s\n", name);                    \
         return i;                                                   \
       }                                                             \
                                                                     \
@@ -178,12 +181,49 @@ find_section (char *name)
 }
 
 ///
+static void
+formalize(char *p, char **name, unsigned long *value) {
+  char *comma, *last, ch;
+
+  // {+'{'(name)?, no-zero-value'}'}?
+  if (*p != '{')
+    usage(stderr);
+  // skip '{' and space/tab
+  while (isspace(*++p))
+    ;
+  // only one comma
+  if (!(comma = strchr(p, ',')) || !(last = strrchr(p, ',')) || comma != last)
+    usage(stderr);
+  //
+  if (isalpha(ch = *p) || ch == '_' || ch == ',') {
+    if (ch != ',') {
+      *name = p;
+      p = comma;
+      // skip space and tab before comma
+      while (isspace(*--p))
+        ;
+      // set name null-terminate
+      ++p;
+      *p = 0;
+    }
+    *value = strtoul(++comma, NULL, 0);
+  }else
+    usage(stderr);
+
+  if (*value == 0)
+    usage(stderr);
+}
+
+///
 static int
 set_crc (char *crc)
 {
   version_t *vv;
   unsigned int vn, i = 0;
   size_t vs;
+  char *cn;
+  unsigned long cv;
+  int flag = 0;
 
   if (! (i = find_section("__versions")))
     return EXIT_FAILURE;
@@ -201,15 +241,28 @@ set_crc (char *crc)
   }
   // number of modversion entry
   vn = vs / sizeof(version_t);
-
+  
+  formalize(crc, &cn, &cv);
+  if (strlen(cn) + 1 > MODULE_NAME_LEN) {
+    fprintf(stderr, "Size of new crc name can not beyond %ld\n",
+            MODULE_NAME_LEN);
+    return EXIT_FAILURE;
+  }
+  // 
   for (i = 0; i < vn; i++) {
-    if (! strcmp(vv[i].name, "single_open")) {
-      printf("[-]Old value => %s\t\t : 0X%08lX\n", vv[i].name, vv[i].crc);
-      vv[i].name[0] = *crc;
-      printf("[+]New value => %s\t\t : 0X%08lX\n", vv[i].name, vv[i].crc);
+    if (! strcmp(vv[i].name, cn)) {
+      flag = 1;
+      printf("[-]Old value => %s:\t\t 0X%lX\n", vv[i].name, vv[i].crc);
+      //memcpy(vv[i].name, cn, strlen(cn));
+      //vv[i].name[strlen(cn)] = 0;
+      vv[i].crc = cv;
+      printf("[+]New value => %s:\t\t 0X%lX\n", vv[i].name, vv[i].crc);
       break;
     }
   }
+
+  if (flag == 0)
+    fprintf(stderr, "Can not find any crc-name : %s", cn);
 
   return EXIT_SUCCESS;
 }
@@ -382,31 +435,31 @@ main (int argc, char **argv)
   // initialize module name
   for (; i < argc; ++i) {
     if (name)
-      return usage(stderr);
+      usage(stderr);
     if (*argv[i] != '-' && *argv[i] != '+')
     name = argv[i];
   }
   
   if (! name)
-    return usage(stderr);
+    usage(stderr);
   //
   if (argc == 2 && ! strncmp(argv[1], "--help", strlen("--help")))
-    return usage(stdout);
+    usage(stdout);
   //
   if (! load_module()) {
-    for (i = 1; i < argc; i++) {
+    for (i = 1; i < argc; ++i) {
       if (! strncmp(argv[i], "-v", opt_len))
         if (*argv[i + 1] == '+')
           set_vermagic(argv[++i] + 1);
         else
           check_vermagic();
-      else if (! strncmp(argv[i], "-c", opt_len))
-        if (*argv[i + 1] == '+')
+      else if (! strncmp(argv[i], "-c", opt_len)) {
+        while (*argv[i + 1] == '+')
           set_crc(argv[++i] + 1);
-        else
+        if (*argv[i] != '+')
           check_crc();
-      // other options?
-      else if (i < argc - 1)
+      } else if (i < argc - 1)
+        // other options?
         usage(stderr);
     }
   } else {
