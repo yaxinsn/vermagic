@@ -46,8 +46,6 @@ static char *vaddr_shst;
 static int file;
 // file state buffer
 static struct stat sb;
-// 
-static int had = 0;
 
 ///
 static void
