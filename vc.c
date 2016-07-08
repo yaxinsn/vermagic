@@ -1,6 +1,6 @@
 //=-------------------------------------------------------------------------=//
 // A tool read and set section value
-// Writed by zet (feqin1023 AT gmail.com)
+// Writed by zet (feqin1023 AT gmail dot com)
 //=-------------------------------------------------------------------------=//
 
 #include <ctype.h>
