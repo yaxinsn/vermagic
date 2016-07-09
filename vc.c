@@ -69,7 +69,7 @@ set_elf_data ()
   Elf32_Shdr *shst_32;
   Elf64_Shdr *shst_64;
   // print welcome info
-  printf("Module name:\t\t\t%s\n", name);
+  printf("Module name:\t\t\t\t%s\n", name);
 
   // Elf64
   if (class_flag == ELF_64) {
@@ -160,7 +160,7 @@ find_section (char *name)
                                                                     \
     for (; i < sec_num; i++)                                        \
       if (! strcmp(vaddr_shst + sha_##A[i].sh_name, name)) {        \
-        printf("Section name:\t\t\t%s\n", name);                    \
+        printf("Section name:\t\t\t\t%s\n", name);                  \
         return i;                                                   \
       }                                                             \
                                                                     \
@@ -250,11 +250,11 @@ set_crc (char *crc)
   for (i = 0; i < vn; i++) {
     if (! strcmp(vv[i].name, cn)) {
       flag = 1;
-      printf("[-]Old value => %s:\t\t 0X%lX\n", vv[i].name, vv[i].crc);
+      printf("{-}Old value => %s:\t\t 0X%lX\n", vv[i].name, vv[i].crc);
       //memcpy(vv[i].name, cn, strlen(cn));
       //vv[i].name[strlen(cn)] = 0;
       vv[i].crc = cv;
-      printf("[+]New value => %s:\t\t 0X%lX\n", vv[i].name, vv[i].crc);
+      printf("{+}New value => %s:\t\t 0X%lX\n", vv[i].name, vv[i].crc);
       break;
     }
   }
@@ -328,7 +328,7 @@ check_vermagic ()
       size -= strlen(p) + 1;
     // variable size pass critical?
     assert(size < os);
-    printf("<%03d> %s\n", ++i, p);
+    printf("[%03d] %s\n", ++i, p);
   }
  
   return;
@@ -363,7 +363,7 @@ set_vermagic(char *ver)
       size -= strlen(p) + 1;
     assert(size < os);
     if (! strncmp(p, "vermagic", len) && p[len] == '=') {
-      printf("[-]Old value => %s\n", p);
+      printf("{-}Old value => %s\n", p);
       if (strlen(ver) > strlen(p) - len - 1) {
         fprintf(stderr, "Length of the new specified vermagic overflow\n");
 	return EXIT_FAILURE;
@@ -371,7 +371,7 @@ set_vermagic(char *ver)
       memcpy(p + len + 1, ver, new_len);
       memset(p + len + 1 + new_len, 0, strlen(p) - len - 1 - new_len);
 
-      printf("[+]New value => %s\n", p);
+      printf("{+}New value => %s\n", p);
     }
   }
 
@@ -416,7 +416,7 @@ check_crc (void)
   vn = vs / sizeof(version_t);
 
   for (i = 0; i < vn; i++)
-    printf("<%03d> %s\t\t\t: 0X%08lX \n", i + 1, vv[i].name, vv[i].crc);
+    printf("[%03d] %s\t\t\t: 0X%08lX \n", i + 1, vv[i].name, vv[i].crc);
 
   return;
 }
