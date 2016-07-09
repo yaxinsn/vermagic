@@ -441,7 +441,7 @@ main (int argc, char **argv)
   if (! name)
     usage(stderr);
   //
-  if (argc == 2 && ! strncmp(argv[1], "--help", strlen("--help")))
+  if (argc == 2 && ! strncmp(argv[1], "-help", strlen("-help")))
     usage(stdout);
   //
   if (! load_module()) {

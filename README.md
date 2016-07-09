@@ -8,7 +8,7 @@ A tool read and set vermagic and crc of kernel module
 
 ## use
 
-  ./vc --help
+  ./vc -help
 
 ## examples
 
