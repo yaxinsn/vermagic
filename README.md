@@ -2,17 +2,17 @@
 
 A tool read and set vermagic and crc of kernel module
 
-## build
+### build
 
 ```
   gcc -o vc vc.c
 ```
-## use
+### use
 
 ```
   ./vc -help
 ```
-## examples
+### examples
 
 -  *set vermagic value to "hello"*
 
