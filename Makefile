@@ -1,5 +1,5 @@
 all:
-	gcc vc.c -o vc -Wall
+	gcc vermagic.c -o vermagic -Wall
 
 clean:
-	rm vc
+	rm vermagic
