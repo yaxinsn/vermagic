@@ -1,7 +1,17 @@
-//=-------------------------------------------------------------------------=//
-// A tool read and set section value
-// Writed by zet (feqin1023 AT gmail dot com)
-//=-------------------------------------------------------------------------=//
+/*
+ * A tool read and set section value
+ * Writed by zet (feqin1023 AT gmail dot com)
+ *
+ * 2018/02/01 - Updated by Abel Romero Pérez aka D1W0U <abel@abelromero.co>
+ * I've fixed the check_vermagic() and set_vermagic() functions.
+ * unload_module() dumps the memory into the module (saves the modification of vermagic).
+ * So we are able to see the module info section fine, and to modify the vermagic.
+ * Also cleaned the source code.
+ *
+ * I've tested it to work on Ubuntu Linux Kernel, 4.13.0-32-generic => 4.13.0-31-generic
+ *
+ * Work done for the ARP-RootKit.
+*/
 
 #include <ctype.h>
 #include <assert.h>
@@ -19,7 +29,7 @@
 #define ELF_32 1
 #define ELF_64 2
 // none = 0, Elf32 = 1, Elf64 = 2
-static int class_flag;
+int class_flag;
 
 /// This data structure defined in linux kernel, include/kernel/module.h
 #define MODULE_NAME_LEN	 (64 - sizeof(unsigned long))
@@ -28,50 +38,50 @@ typedef struct modversion_info {
 	char name[MODULE_NAME_LEN];
 } version_t;
 
-/// All of these elf structure pointer point to mapped virtual address.
-static Elf32_Ehdr *eh_32;
-static Elf64_Ehdr *eh_64;
-// TODO useless
-static Elf32_Phdr *phdr_32;
-static Elf64_Phdr *phdr_64;
-static Elf32_Shdr *sha_32;
-static Elf64_Shdr *sha_64;
-/// Module name
-static char *name;
-/// Virtual address of mapped module
-static char *map;
-/// Virtual address of sction header string table 
-static char *vaddr_shst;
-// file descriptor of the module
-static int file;
-// file state buffer
-static struct stat sb;
+#define VMAGIC_LEN 8 // Length of "vermagic" variable.
 
-///
-static void
-usage (FILE *stream)
-{
-  fprintf(stream, "Usage: bin <option <+new-value>(s)> <module-name>\n");
-  fprintf(stream, " Raed and set vermagic and crc of module\n");
-  fprintf(stream, " Opthons are:\n");
-  fprintf(stream, "  -v\t\t\t\t\tCheck vermgaic.\n");
-  fprintf(stream, "  -v +new-value\t\t\t\tSet vermagiv.\n");
-  fprintf(stream, "  -c\t\t\t\t\tCheck crc.\n");
-  fprintf(stream, "  -c {\"+'{'name, no-zero-value'}'\"}\tSet crc.\n");
+/// All of these elf structure pointer point to mapped virtual address.
+Elf32_Ehdr *eh_32;
+Elf64_Ehdr *eh_64;
+// TODO useless
+Elf32_Phdr *phdr_32;
+Elf64_Phdr *phdr_64;
+Elf32_Shdr *sha_32;
+Elf64_Shdr *sha_64;
+/// Module name
+char *name;
+/// Virtual address of mapped module
+char *map;
+/// Virtual address of sction header string table 
+char *vaddr_shst;
+// file descriptor of the module
+int file;
+// file state buffer
+struct stat sb;
+// program name
+char *bin = NULL;
+
+void usage (FILE *stream) {
+  fprintf(stream, 
+  "Read and set vermagic and crc of module\n"
+  "Usage: %s <options> <module>\n"
+  "Options are:\n"
+  "\t-d, dump .modinfo section.\n"
+  "\t-v new-value, set vermagic.\n"
+  "\t-D, dump CRCs.\n"
+  "\t-c {\"+'{'name, no-zero-value'}'\"}, set CRC.\n",
+  bin
+  );
 
   exit(stream == stdout ? EXIT_SUCCESS : EXIT_FAILURE);
 }
 
 /// Initialize the global elf variables
-static void
-set_elf_data ()
+void set_elf_data ()
 {
   Elf32_Shdr *shst_32;
   Elf64_Shdr *shst_64;
-  // print welcome info
-  printf("Module name:\t\t\t\t%s\n", name);
 
-  // Elf64
   if (class_flag == ELF_64) {
 
 #define SET_ELF_DATA_ARCH(A)                                            \
@@ -84,25 +94,20 @@ set_elf_data ()
     /* this is a common variable for elf32 and elf64*/                  \
     vaddr_shst = map + shst_##A->sh_offset;                             \
 
-    // elf64
     SET_ELF_DATA_ARCH(64)
   } else {        
-    // elf32
     SET_ELF_DATA_ARCH(32)
   }
 
   return;
 }
 
-//
-static int
-load_module ()
-{
+int load_module () {
   // file descriptor of the module
   int file;
 
   assert(name);
-  file = open(name, O_RDONLY);
+  file = open(name, O_RDWR);
   
   if (file == -1) {
     perror("open");
@@ -117,7 +122,7 @@ load_module ()
   // TODO: maybe need a more carefull protection value.
   // for now READ and write.
   map = (char *)mmap(NULL, sb.st_size, PROT_READ|PROT_WRITE, 
-                             MAP_PRIVATE, file, 0);
+                             MAP_SHARED, file, 0);
   if(map == MAP_FAILED) {
     perror("mmap");
     return EXIT_FAILURE;
@@ -147,9 +152,7 @@ load_module ()
 
 /// if find return the section index
 //  not return 0 
-static unsigned int
-find_section (char *name)
-{
+unsigned int find_section (char *name) {
   unsigned int i = 0, sec_num = 0;
 
   if (class_flag == ELF_64) {
@@ -178,9 +181,7 @@ find_section (char *name)
   return 0;
 }
 
-///
-static void
-formalize(char *p, char **name, unsigned long *value) {
+void formalize(char *p, char **name, unsigned long *value) {
   char *comma, *last, ch;
 
   // {+'{'(name)?, no-zero-value'}'}?
@@ -212,10 +213,7 @@ formalize(char *p, char **name, unsigned long *value) {
     usage(stderr);
 }
 
-///
-static int
-set_crc (char *crc)
-{
+int set_crc (char *crc) {
   version_t *vv;
   unsigned int vn, i = 0;
   size_t vs;
@@ -265,84 +263,39 @@ set_crc (char *crc)
   return EXIT_SUCCESS;
 }
 
-/// After this function value of pp will point to a no-zero character.
-//
-static void
-advance (char **pp, size_t *size)
-{
-  char *p = *pp;
-
-  if (*p)
-    return;
-  
-  // skip zero
-  while (! *p++)
-    if (--*size == 0)
-      return;
-
-  // update the pointer of caller
-  *pp = p;
-
-  return;
-}
-
-///
-static void
-check_vermagic ()
-{
+void dump_modinfo (void) {
   unsigned int i = 0; 
   // section size
   size_t size = 0;
   // original section size
-  size_t os;
   char *p = NULL;
 
-  // elf64
+  if (! (i = find_section(".modinfo")))
+    return;
+
   if (class_flag == ELF_64) {
-
-#define CHECK_VERMAGIC_ARCH(A)                                            \
-    if (! (i = find_section(".modinfo")))                                 \
-      return;                                                             \
-                                                                          \
-    /* if has not sectuion .modinfo*/                                     \
-    if (i == (unsigned int)eh_##A->e_shnum) {                             \
-      printf("Warnning: has not any section named .modinfo\n");           \
-      return;                                                             \
-    }                                                                     \
-                                                                          \
-    size = sha_##A[i].sh_size;                                            \
-    p = map + sha_##A[i].sh_offset;                                       \
-
-    // elf64
-    CHECK_VERMAGIC_ARCH(64)
-  } else {    
-    // elf32
-    CHECK_VERMAGIC_ARCH(32)
+    p = map + sha_64[i].sh_offset;
+    size = (size_t)sha_64[i].sh_size;
+  } else {
+    p = map + sha_32[i].sh_offset;
+    size = (size_t)sha_32[i].sh_size;
   }
 
-  os = size;
   // there is no difference between elf32 and elf64 at this point
-  for (i = 0; size; p += strlen(p) + 1) {
-    advance(&p, &size);
-    if (size && strlen(p))
-      size -= strlen(p) + 1;
-    // variable size pass critical?
-    assert(size < os);
-    printf("[%03d] %s\n", ++i, p);
+  for (i = 0; size > i;) {
+    printf("[%03d] %s\n", i, &p[i]);
+	i += strlen(&p[i]);
+	while (!p[i]) i++; // skip 0's
   }
  
   return;
 }
 
-//
-static int
-set_vermagic(char *ver)
-{
+int set_vermagic(char *ver) {
   char *p;
   unsigned int i;
-  unsigned long len = strlen("vermagic");
   unsigned long new_len = strlen(ver);
-  size_t size, os;
+  size_t size;
 
   // no seection named .modinfo 
   if (! (i = find_section(".modinfo")))
@@ -356,44 +309,39 @@ set_vermagic(char *ver)
     size = (size_t)sha_32[i].sh_size;
   }
 
-  os = size;
-  for (; size; p += strlen(p) + 1) {
-    advance(&p, &size);
-    if (size && strlen(p))
-      size -= strlen(p) + 1;
-    assert(size < os);
-    if (! strncmp(p, "vermagic", len) && p[len] == '=') {
-      printf("{-}Old value => %s\n", p);
-      if (strlen(ver) > strlen(p) - len - 1) {
+  for (i = 0; size > i;) {
+    if (! strncmp(&p[i], "vermagic", VMAGIC_LEN) && p[i + VMAGIC_LEN] == '=') {
+      printf("{-}Old value => %s\n", &p[i]);
+      if (new_len > strlen(&p[i + VMAGIC_LEN + 1])) {
         fprintf(stderr, "Length of the new specified vermagic overflow\n");
-	return EXIT_FAILURE;
+		return EXIT_FAILURE;
       }
-      memcpy(p + len + 1, ver, new_len);
-      memset(p + len + 1 + new_len, 0, strlen(p) - len - 1 - new_len);
+      memcpy(&p[i + VMAGIC_LEN + 1], ver, new_len);
+      memset(&p[i + VMAGIC_LEN + 1 + new_len], 0, strlen(&p[i]) - VMAGIC_LEN - 1 - new_len);
 
-      printf("{+}New value => %s\n", p);
+      printf("{+}New value => %s\n", &p[i]);
     }
+    i += strlen(&p[i]);
+    while (!p[i]) i++; // skip 0's
   }
 
   return EXIT_SUCCESS;
 }
 
-///
-static int
-unload_module ()
-{
-  close(file);
+int unload_module (void) {
+  if (msync(map, sb.st_size, MS_SYNC) == -1) {
+    perror("Could not sync the file to disk");
+    return EXIT_FAILURE;
+  }
   if (munmap(map, sb.st_size) == -1) {
     perror("munmap");
     return EXIT_FAILURE;
   }
+  close(file);
   return EXIT_SUCCESS;
 }
 
-///
-static void
-check_crc (void)
-{
+void dump_crc (void) {
   // version info vector
   version_t *vv;
   unsigned int vn, i = 0;
@@ -421,48 +369,29 @@ check_crc (void)
   return;
 }
 
-///
-int
-main (int argc, char **argv) 
-{
-  // skip the program name
-  int i = 1;
-  // 
-  size_t opt_len = strlen("-c");
-
-  // initialize module name
-  for (; i < argc; ++i) {
-    if (name)
-      usage(stderr);
-    if (*argv[i] != '-' && *argv[i] != '+')
-    name = argv[i];
+int main (int argc, char **argv) {
+  bin = argv[0];
+  name = argv[argc - 1];
+  
+  if (!name || argc < 3) {
+    usage(stderr);
   }
   
-  if (! name)
-    usage(stderr);
-  //
-  if (argc == 2 && ! strncmp(argv[1], "-help", strlen("-help")))
-    usage(stdout);
-  //
-  if (! load_module()) {
-    for (i = 1; i < argc; ++i) {
-      if (! strncmp(argv[i], "-v", opt_len))
-        if (*argv[i + 1] == '+')
-          set_vermagic(argv[++i] + 1);
-        else
-          check_vermagic();
-      else if (! strncmp(argv[i], "-c", opt_len)) {
-        while (*argv[i + 1] == '+')
-          set_crc(argv[++i] + 1);
-        if (*argv[i] != '+')
-          check_crc();
-      } else if (i < argc - 1)
-        // other options?
-        usage(stderr);
-    }
+  if (load_module()) {
+	fprintf(stderr, "error: Load module : %s failed.\n", name);
+	return EXIT_FAILURE;
+  }
+
+  if (!strncmp(argv[1], "-d", 2) && argc == 3) {
+    dump_modinfo();
+  } else if (!strncmp(argv[1], "-v", 2) && argc == 4) {
+    set_vermagic(argv[2]);
+  } else if (!strncmp(argv[1], "-D", 2) && argc == 3) {
+	dump_crc();
+  } else if (!strncmp(argv[1], "-c", 2) && argc == 4) {
+	set_crc(argv[2]);
   } else {
-      fprintf(stderr, "error: Load module : %s failed.\n", name);
-      return EXIT_FAILURE;
+	usage(stderr);
   }
 
   return unload_module();

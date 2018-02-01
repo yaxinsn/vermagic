@@ -5,19 +5,19 @@ A tool read and set vermagic and crc of kernel module
 ### build
 
 ```
-  gcc -o vc vc.c
+make
 ```
 ### use
 
 ```
-  ./vc -help
+./vc -help
 ```
 ### examples
 
--  *set vermagic value to "hello"*
+-  *set vermagic value to "hello world"*
 
 ```  
-./vc -v +hello some-name.ko
+./vc -v "hello world" some-name.ko
 ```
 -  *set single_open crc value to 0x123*
   
@@ -33,4 +33,3 @@ Anather more magic example:
   Any other do you want?
   
   tell me: feqin1023 AT gmail dot com
-
