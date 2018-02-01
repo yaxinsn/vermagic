@@ -1,35 +1,28 @@
-# vc
+# vermagic
 
-A tool read and set vermagic and crc of kernel module
+A tool dump .modinfo section and set vermagic variable of Linux Kernel Modules.
 
-### build
+It also supports (not tested) CRC dump and changes.
 
-```
-make
-```
-### use
+The original work is from here: https://github.com/fanfuqiang/vc
 
-```
-./vc -help
-```
-### examples
+### Build
+`make`
 
--  *set vermagic value to "hello world"*
+### Use
+`./vc -help`
 
-```  
-./vc -v "hello world" some-name.ko
-```
--  *set single_open crc value to 0x123*
-  
-```
-./vc -c "+{single_open, 0x123}" some-name.ko
-```
+### Examples
+- Set vermagic value to "hello world"
+`./vc -v "hello world" some-name.ko`
+
+- Set single_open crc value to 0x123  
+`./vc -c "+{single_open, 0x123}" some-name.ko`
+
 Anather more magic example:
 
-```
-./vc -c "+{single_open, 0x123}" "+{ some-name ,  0x1234 }" some-name.ko
-```
-## other
-  Any other do you want?
-  
-  tell me: feqin1023 AT gmail dot com
+That was implemented on the release I cloned. But the code is very dirty and I removed a lot of code.
+The way of setting multiple CRCs at time is undeveloped.
+Re-execute the binary instead or give support in a clean way, please.
+
+_`./vermagic -c "+{single_open, 0x123}" "+{ some-name ,  0x1234 }" some-name.ko`
