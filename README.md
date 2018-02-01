@@ -25,4 +25,4 @@ That was implemented on the release I cloned. But the code is very dirty and I r
 The way of setting multiple CRCs at time is undeveloped.
 Re-execute the binary instead or give support in a clean way, please.
 
-~~`./vermagic -c "+{single_open, 0x123}" "+{ some-name ,  0x1234 }" some-name.ko`
+~~`./vermagic -c "+{single_open, 0x123}" "+{ some-name ,  0x1234 }" some-name.ko`~~
