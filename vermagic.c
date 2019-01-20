@@ -29,7 +29,7 @@
 #define ELF_32 1
 #define ELF_64 2
 // none = 0, Elf32 = 1, Elf64 = 2
-int class_flag;
+
 
 /// This data structure defined in linux kernel, include/kernel/module.h
 #define MODULE_NAME_LEN	 (64 - sizeof(unsigned long))
@@ -39,25 +39,28 @@ typedef struct modversion_info {
 } version_t;
 
 #define VMAGIC_LEN 8 // Length of "vermagic" variable.
+typedef struct module_bin_info{
+    int class_flag;
 
-/// All of these elf structure pointer point to mapped virtual address.
-Elf32_Ehdr *eh_32;
-Elf64_Ehdr *eh_64;
-// TODO useless
-Elf32_Phdr *phdr_32;
-Elf64_Phdr *phdr_64;
-Elf32_Shdr *sha_32;
-Elf64_Shdr *sha_64;
-/// Module name
-char *name;
-/// Virtual address of mapped module
-char *map;
-/// Virtual address of sction header string table 
-char *vaddr_shst;
-// file descriptor of the module
-int file;
-// file state buffer
+    /// All of these elf structure pointer point to mapped virtual address.
+    Elf32_Ehdr *eh_32;
+    Elf64_Ehdr *eh_64;
+    // TODO useless
+    Elf32_Phdr *phdr_32;
+    Elf64_Phdr *phdr_64;
+    Elf32_Shdr *sha_32;
+    Elf64_Shdr *sha_64;
+    /// Module name
+    char *name;
+    /// Virtual address of mapped module
+    char *map;
+    /// Virtual address of sction header string table
+    char *vaddr_shst;
+    // file descriptor of the module
+    int file;
+    // file state buffer
 struct stat sb;
+}module_bin;
 // program name
 char *bin = NULL;
 
@@ -77,67 +80,67 @@ void usage (FILE *stream) {
 }
 
 /// Initialize the global elf variables
-void set_elf_data ()
+void set_elf_data (module_bin* mb)
 {
   Elf32_Shdr *shst_32;
   Elf64_Shdr *shst_64;
 
-  if (class_flag == ELF_64) {
+  if (mb->class_flag == ELF_64) {
 
 #define SET_ELF_DATA_ARCH(A)                                            \
-    eh_##A = (Elf##A##_Ehdr *)map;                                      \
+    mb->eh_##A = (Elf##A##_Ehdr *)mb->map;                                      \
     /* program header mostly is empty in shared module*/                \
-    if (eh_##A->e_phoff)                                                \
-      phdr_##A = (Elf##A##_Phdr *)((char *)eh_##A + eh_##A->e_phoff);   \
-    sha_##A = (Elf##A##_Shdr *)((char *)eh_##A + eh_##A->e_shoff);      \
-    shst_##A = &sha_##A[eh_##A->e_shstrndx];                            \
+    if (mb->eh_##A->e_phoff)                                                \
+      mb->phdr_##A = (Elf##A##_Phdr *)((char *)mb->eh_##A + mb->eh_##A->e_phoff);   \
+    mb->sha_##A = (Elf##A##_Shdr *)((char *)mb->eh_##A + mb->eh_##A->e_shoff);      \
+    shst_##A = &mb->sha_##A[mb->eh_##A->e_shstrndx];                            \
     /* this is a common variable for elf32 and elf64*/                  \
-    vaddr_shst = map + shst_##A->sh_offset;                             \
+    mb->vaddr_shst = mb->map + shst_##A->sh_offset;                             \
 
     SET_ELF_DATA_ARCH(64)
-  } else {        
+  } else {
     SET_ELF_DATA_ARCH(32)
   }
 
   return;
 }
 
-int load_module () {
+int load_module (module_bin* mb) {
   // file descriptor of the module
   int file;
 
-  assert(name);
-  file = open(name, O_RDWR);
+  assert(mb->name);
+  file = open(mb->name, O_RDWR);
   
   if (file == -1) {
     perror("open");
     return EXIT_FAILURE;
   }
-
-  if (fstat(file, &sb) == -1) {
+  mb->file = file;
+  if (fstat(file, &mb->sb) == -1) {
     perror("fstat");
     return EXIT_FAILURE;
   }
 
   // TODO: maybe need a more carefull protection value.
   // for now READ and write.
-  map = (char *)mmap(NULL, sb.st_size, PROT_READ|PROT_WRITE, 
+  mb->map = (char *)mmap(NULL, mb->sb.st_size, PROT_READ|PROT_WRITE,
                              MAP_SHARED, file, 0);
-  if(map == MAP_FAILED) {
+  if(mb->map == MAP_FAILED) {
     perror("mmap");
     return EXIT_FAILURE;
   }
 
   // check elf object version, EI_CLASS == 4
-  class_flag = (int) *(map + EI_CLASS);
-  if (class_flag != ELF_32 && class_flag != ELF_64) {
-    fprintf(stderr, "error: Module :%s format error\n", name);
+  mb->class_flag = (int) *(mb->map + EI_CLASS);
+  if (mb->class_flag != ELF_32 && mb->class_flag != ELF_64) {
+    fprintf(stderr, "error: Module :%s format error\n", mb->name);
     return EXIT_FAILURE;
   }
 
   // if i386 operate elf64
 #ifdef __i386__
-  if (class_flag == ELF_64)
+  if (mb->class_flag == ELF_64)
     fprintf(stderr, "error: You are operating ELF64 object in 32 bits machine.\
        \nMostly you will receive Segmentation Fault.                          \
        \nIf you really need do this.                                          \
@@ -145,30 +148,30 @@ int load_module () {
        \n");
 #endif
 
-  set_elf_data();
+  set_elf_data(mb);
 
   return EXIT_SUCCESS;
 }
 
 /// if find return the section index
-//  not return 0 
-unsigned int find_section (char *name) {
+//  not return 0
+unsigned int find_section (module_bin* mb,char *name) {
   unsigned int i = 0, sec_num = 0;
 
-  if (class_flag == ELF_64) {
-//        
+  if (mb->class_flag == ELF_64) {
+//
 #define FIND_SECTION_ARCH(A)                                        \
-    sec_num = (unsigned int)eh_##A->e_shnum;                        \
+    sec_num = (unsigned int)mb->eh_##A->e_shnum;                        \
     assert(sec_num && "elf section number is 0");                   \
                                                                     \
     for (; i < sec_num; i++)                                        \
-      if (! strcmp(vaddr_shst + sha_##A[i].sh_name, name)) {        \
+      if (! strcmp(mb->vaddr_shst + mb->sha_##A[i].sh_name, name)) {        \
         printf("Section name:\t\t\t\t%s\n", name);                  \
         return i;                                                   \
       }                                                             \
                                                                     \
     /* if has not find sectuion*/                                   \
-    if (i == (unsigned int)eh_##A->e_shnum)                         \
+    if (i == (unsigned int)mb->eh_##A->e_shnum)                         \
       fprintf(stderr, "Not any section named: %s\n", name);         \
  
     // elf64
@@ -213,7 +216,7 @@ void formalize(char *p, char **name, unsigned long *value) {
     usage(stderr);
 }
 
-int set_crc (char *crc) {
+int set_crc (module_bin* mb,char *crc) {
   version_t *vv;
   unsigned int vn, i = 0;
   size_t vs;
@@ -221,14 +224,14 @@ int set_crc (char *crc) {
   unsigned long cv;
   int flag = 0;
 
-  if (! (i = find_section("__versions")))
+  if (! (i = find_section(mb,"__versions")))
     return EXIT_FAILURE;
-  if (class_flag == ELF_64) {
+  if (mb->class_flag == ELF_64) {
 
 #define SET_CRC_ARCH(A)                                                       \
-      vv = (version_t *)((char *)eh_##A + sha_##A[i].sh_offset);              \
-      vs = (size_t)sha_##A[i].sh_size;                                        \
-    
+      vv = (version_t *)((char *)mb->eh_##A + mb->sha_##A[i].sh_offset);              \
+      vs = (size_t)mb->sha_##A[i].sh_size;                                        \
+
     // elf64
     SET_CRC_ARCH(64)
   } else {
@@ -263,22 +266,22 @@ int set_crc (char *crc) {
   return EXIT_SUCCESS;
 }
 
-void dump_modinfo (void) {
-  unsigned int i = 0; 
+void dump_modinfo (module_bin* mb) {
+  unsigned int i = 0;
   // section size
   size_t size = 0;
   // original section size
   char *p = NULL;
 
-  if (! (i = find_section(".modinfo")))
+  if (! (i = find_section(mb,".modinfo")))
     return;
 
-  if (class_flag == ELF_64) {
-    p = map + sha_64[i].sh_offset;
-    size = (size_t)sha_64[i].sh_size;
+  if (mb->class_flag == ELF_64) {
+    p = mb->map + mb->sha_64[i].sh_offset;
+    size = (size_t)mb->sha_64[i].sh_size;
   } else {
-    p = map + sha_32[i].sh_offset;
-    size = (size_t)sha_32[i].sh_size;
+    p = mb->map + mb->sha_32[i].sh_offset;
+    size = (size_t)mb->sha_32[i].sh_size;
   }
 
   // there is no difference between elf32 and elf64 at this point
@@ -291,22 +294,22 @@ void dump_modinfo (void) {
   return;
 }
 
-int set_vermagic(char *ver) {
+int set_vermagic(module_bin* mb,char *ver) {
   char *p;
   unsigned int i;
   unsigned long new_len = strlen(ver);
   size_t size;
 
-  // no seection named .modinfo 
-  if (! (i = find_section(".modinfo")))
+  // no seection named .modinfo
+  if (! (i = find_section(mb,".modinfo")))
     return EXIT_FAILURE;
 
-  if (class_flag == ELF_64) {
-    p = map + sha_64[i].sh_offset;
-    size = (size_t)sha_64[i].sh_size;
+  if (mb->class_flag == ELF_64) {
+    p = mb->map + mb->sha_64[i].sh_offset;
+    size = (size_t)mb->sha_64[i].sh_size;
   } else {
-    p = map + sha_32[i].sh_offset;
-    size = (size_t)sha_32[i].sh_size;
+    p = mb->map + mb->sha_32[i].sh_offset;
+    size = (size_t)mb->sha_32[i].sh_size;
   }
 
   for (i = 0; size > i;) {
@@ -328,31 +331,31 @@ int set_vermagic(char *ver) {
   return EXIT_SUCCESS;
 }
 
-int unload_module (void) {
-  if (msync(map, sb.st_size, MS_SYNC) == -1) {
+int unload_module (module_bin* mb) {
+  if (msync(mb->map, mb->sb.st_size, MS_SYNC) == -1) {
     perror("Could not sync the file to disk");
     return EXIT_FAILURE;
   }
-  if (munmap(map, sb.st_size) == -1) {
+  if (munmap(mb->map, mb->sb.st_size) == -1) {
     perror("munmap");
     return EXIT_FAILURE;
   }
-  close(file);
+  close(mb->file);
   return EXIT_SUCCESS;
 }
 
-void dump_crc (void) {
+void dump_crc (module_bin* mb) {
   // version info vector
   version_t *vv;
   unsigned int vn, i = 0;
   size_t vs;
 
-  if (class_flag == ELF_64) {
+  if (mb->class_flag == ELF_64) {
 #define CHECK_CRC_ARCH(A)                                                   \
-    if (! (i = find_section("__versions")))                                 \
+    if (! (i = find_section(mb,"__versions")))                                 \
       return;                                                               \
-    vv = (version_t *)((char *)eh_##A + sha_##A[i].sh_offset);              \
-    vs = (size_t)sha_##A[i].sh_size;                                        \
+    vv = (version_t *)((char *)mb->eh_##A + mb->sha_##A[i].sh_offset);              \
+    vs = (size_t)mb->sha_##A[i].sh_size;                                        \
 
     // elf64
     CHECK_CRC_ARCH(64)
@@ -370,30 +373,32 @@ void dump_crc (void) {
 }
 
 int main (int argc, char **argv) {
+  module_bin mb;
+
   bin = argv[0];
-  name = argv[argc - 1];
-  
-  if (!name || argc < 3) {
+  mb.name = argv[argc - 1];
+
+  if (!mb.name || argc < 3) {
     usage(stderr);
   }
-  
-  if (load_module()) {
-	fprintf(stderr, "error: Load module : %s failed.\n", name);
+
+  if (load_module(&mb)) {
+	fprintf(stderr, "error: Load module : %s failed.\n", mb.name);
 	return EXIT_FAILURE;
   }
 
   if (!strncmp(argv[1], "-d", 2) && argc == 3) {
-    dump_modinfo();
+    dump_modinfo(&mb);
   } else if (!strncmp(argv[1], "-v", 2) && argc == 4) {
-    set_vermagic(argv[2]);
+    set_vermagic(&mb,argv[2]);
   } else if (!strncmp(argv[1], "-D", 2) && argc == 3) {
-	dump_crc();
+	dump_crc(&mb);
   } else if (!strncmp(argv[1], "-c", 2) && argc == 4) {
-	set_crc(argv[2]);
+	set_crc(&mb,argv[2]);
   } else {
 	usage(stderr);
   }
 
-  return unload_module();
+  return unload_module(&mb);
 }
 
