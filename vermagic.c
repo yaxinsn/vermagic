@@ -649,6 +649,8 @@ int set_vermagic_and_crc(void)
     int kernel_version_num = 0;
     char kernel_key_path[128]= {0};
     int ret;
+    unsigned long ul_crc = 0;
+    char * key;
 /*
     char* x = "module_layout";//2.6.30 and high
 
@@ -668,14 +670,15 @@ int set_vermagic_and_crc(void)
     }
     if(kernel_version_num >= __KERNEL_VERSION(2,6,30))
     {
-        get_os_check_versions_key_crc(kernel_key_path,"module_layout",crc);
+        key = "module_layout";
     }
     else
     {
-        get_os_check_versions_key_crc(kernel_key_path,"struct_module",crc);
-
+        key = "struct_module";
     }
-    ___DEBUG("crc <%s> \n",crc);
+     get_os_check_versions_key_crc(kernel_key_path,key,crc);
+     ul_crc = strtoul(crc,NULL,16);
+    ___DEBUG("%s crc <%s> ul_crc 0x%X \n",key, crc,ul_crc);
     return 0;
 }
 /*****************************************/
