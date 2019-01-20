@@ -69,6 +69,8 @@ typedef struct module_bin_info{
 // program name
 char *bin = NULL;
 
+int unload_module (module_bin* mb);
+
 void usage (FILE *stream) {
   fprintf(stream,
   "Read and set vermagic and crc of module\n"
@@ -393,11 +395,11 @@ int __get_kernel_version(char* ver_str,int* kernel_num)
     FILE* fp = NULL;
     char buffer[1024] = {0};
     char* p;
-    char* q;
+    //char* q;
     char* verStr = NULL;
     char* key = "Linux version ";
-    int ret;
-    int version_num = 0;
+  //  int ret;
+//    int version_num = 0;
     int a,b,c;
     char d[1024] = {0};
     fp = fopen("/proc/version","r");
@@ -432,7 +434,7 @@ int __get_kernel_version(char* ver_str,int* kernel_num)
         fclose(fp);
         return -1;
     }
-    sscanf(verStr,"%d.%d.%d%s",&a,&b,&c,&d);
+    sscanf(verStr,"%d.%d.%d%s",&a,&b,&c,d);
     ___DEBUG("a %d b %d c %d d %s \n",a,b,c,d);
     fclose(fp);
     strcpy(ver_str,verStr);
@@ -537,7 +539,7 @@ int __get_one_ko_path_from_dep(const char* kernel_key_path, char ** ko_path)
         char cmd[256] = {0};
         sprintf(cmd,"unxz %s -c >>/tmp/1qaz.ko",tmp_ko_path);
         system(cmd);
-        sprintf(tmp_ko_path,"%s\0","/tmp/1qaz.ko");
+        sprintf(tmp_ko_path,"%s","/tmp/1qaz.ko\0");
 
     }
     *ko_path = malloc(sizeof(tmp_ko_path)+1);
@@ -642,10 +644,30 @@ int get_os_check_versions_key_crc(const char* kernel_key_path,const char* key,ch
     }
     return -1;
 }
-int set_vermagic_and_crc(void)
+int __set_vermagic_and_crc_to_ko_file(char* name,char* os_vermagic,char* key, unsigned long ul_crc)
+{
+
+    module_bin mb;
+    int ret;
+    memset(&mb,0,sizeof(mb));
+    mb.name = name;
+    if (load_module(&mb)) {
+        return -1;
+    }
+    ret = set_check_version_key_crc(&mb,key,ul_crc);
+    if(ret == 0)
+    {
+        ret = set_vermagic(&mb, os_vermagic);
+    }
+    unload_module(&mb);
+    return ret;
+
+
+}
+int set_vermagic_and_crc(char* name)
 {
     char* __os_vermagic = NULL;
-    char* __check_versions_key_crc = NULL;
+//    char* __check_versions_key_crc = NULL;
     int kernel_version_num = 0;
     char kernel_key_path[128]= {0};
     int ret;
@@ -678,7 +700,14 @@ int set_vermagic_and_crc(void)
     }
      get_os_check_versions_key_crc(kernel_key_path,key,crc);
      ul_crc = strtoul(crc,NULL,16);
-    ___DEBUG("%s crc <%s> ul_crc 0x%X \n",key, crc,ul_crc);
+    ___DEBUG("%s crc <%s> ul_crc 0x%lx \n",key, crc,ul_crc);
+
+    /* set to the ko. */
+    ret =  __set_vermagic_and_crc_to_ko_file(name,__os_vermagic,key,ul_crc);
+    if(ret)
+    {
+        fprintf(stderr,"fail: set vermaagic and crc \n");
+    }
     return 0;
 }
 /*****************************************/
@@ -749,7 +778,7 @@ int main (int argc, char **argv) {
 	set_crc(&mb,argv[2]);
   } else if (!strncmp(argv[1], "-x", 2) && argc == 3) {
 
-	set_vermagic_and_crc();
+	set_vermagic_and_crc(argv[2]);
   }  else {
 	usage(stderr);
   }
