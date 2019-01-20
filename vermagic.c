@@ -15,6 +15,8 @@
 
 #include <ctype.h>
 #include <assert.h>
+#include <errno.h>
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -24,6 +26,9 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 
+#define  __KERNEL_VERSION(x,y,z) (((x)<<16)+((y)<<8)+((z)))
+#define ___DEBUG printf
+#define FREE(x) do{ if((x)) free((x));}while(0)
 /// ELF object
 #define EI_CLASS 4
 #define ELF_32 1
@@ -59,13 +64,13 @@ typedef struct module_bin_info{
     // file descriptor of the module
     int file;
     // file state buffer
-struct stat sb;
+    struct stat sb;
 }module_bin;
 // program name
 char *bin = NULL;
 
 void usage (FILE *stream) {
-  fprintf(stream, 
+  fprintf(stream,
   "Read and set vermagic and crc of module\n"
   "Usage: %s <options> <module>\n"
   "Options are:\n"
@@ -113,7 +118,7 @@ int load_module (module_bin* mb) {
   file = open(mb->name, O_RDWR);
   
   if (file == -1) {
-    perror("open");
+    perror("open---");
     return EXIT_FAILURE;
   }
   mb->file = file;
@@ -330,6 +335,350 @@ int set_vermagic(module_bin* mb,char *ver) {
 
   return EXIT_SUCCESS;
 }
+/*****************************************/
+int set_check_version_key_crc (module_bin* mb,char* key, unsigned long crc) {
+  version_t *vv;
+  unsigned int vn, i = 0;
+  size_t vs;
+  char *cn;
+  unsigned long cv;
+  int flag = 0;
+
+  if (! (i = find_section(mb,"__versions")))
+    return EXIT_FAILURE;
+  if (mb->class_flag == ELF_64) {
+
+#define SET_CRC_ARCH(A)                                                       \
+      vv = (version_t *)((char *)mb->eh_##A + mb->sha_##A[i].sh_offset);              \
+      vs = (size_t)mb->sha_##A[i].sh_size;                                        \
+
+    // elf64
+    SET_CRC_ARCH(64)
+  } else {
+    // elf32
+    SET_CRC_ARCH(32)
+  }
+  // number of modversion entry
+  vn = vs / sizeof(version_t);
+
+  //formalize(crc, &cn, &cv);
+  cn = key;
+  cv = crc;
+  if (strlen(cn) + 1 > MODULE_NAME_LEN) {
+    fprintf(stderr, "Size of new crc name can not beyond %ld\n",
+            MODULE_NAME_LEN);
+    return EXIT_FAILURE;
+  }
+  //
+  for (i = 0; i < vn; i++) {
+    if (! strcmp(vv[i].name, cn)) {
+      flag = 1;
+      printf("{-}Old value => %s:\t\t 0X%lX\n", vv[i].name, vv[i].crc);
+      //memcpy(vv[i].name, cn, strlen(cn));
+      //vv[i].name[strlen(cn)] = 0;
+      vv[i].crc = cv;
+      printf("{+}New value => %s:\t\t 0X%lX\n", vv[i].name, vv[i].crc);
+      break;
+    }
+  }
+
+  if (flag == 0)
+    fprintf(stderr, "Can not find any crc-name : %s", cn);
+
+  return EXIT_SUCCESS;
+}
+
+int __get_kernel_version(char* ver_str,int* kernel_num)
+{
+    FILE* fp = NULL;
+    char buffer[1024] = {0};
+    char* p;
+    char* q;
+    char* verStr = NULL;
+    char* key = "Linux version ";
+    int ret;
+    int version_num = 0;
+    int a,b,c;
+    char d[1024] = {0};
+    fp = fopen("/proc/version","r");
+    if(fp == NULL)
+    {
+        perror("open /proc/version");
+        exit(1);
+    }
+    if(NULL == fgets(buffer,1024,fp))
+    {
+        perror("read /proc/version");
+        fclose(fp);
+        exit(1);
+    }
+    /*Linux version xxx-vorter-X () */
+    p = strstr(buffer,key);
+    if(!p)
+    {
+        //
+       fprintf(stderr, "error: not find <%s> from <%s>\n",key,buffer);
+       fclose(fp);
+       return -1;
+    }
+    p+=strlen(key);
+    verStr = p;
+    p = strchr(verStr,' ');
+    if(p)
+        *p = 0;
+    else
+    {
+        fprintf(stderr, "error: not find Version's space!\n");
+        fclose(fp);
+        return -1;
+    }
+    sscanf(verStr,"%d.%d.%d%s",&a,&b,&c,&d);
+    ___DEBUG("a %d b %d c %d d %s \n",a,b,c,d);
+    fclose(fp);
+    strcpy(ver_str,verStr);
+    *kernel_num = ((a<<16) + (b<<8) +c);
+    return 0;
+}
+int __get_vermagic_from_modinfo (module_bin* mb,char** ret)
+{
+  unsigned int i = 0;
+  // section size
+  size_t size = 0;
+  // original section size
+  char *p = NULL;
+
+  if (! (i = find_section(mb,".modinfo")))
+    return -1;
+
+  if (mb->class_flag == ELF_64) {
+    p = mb->map + mb->sha_64[i].sh_offset;
+    size = (size_t)mb->sha_64[i].sh_size;
+  } else {
+    p = mb->map + mb->sha_32[i].sh_offset;
+    size = (size_t)mb->sha_32[i].sh_size;
+  }
+
+  // there is no difference between elf32 and elf64 at this point
+  for (i = 0; size > i;) {
+    //printf("[%03d] %s\n", i, &p[i]);
+     if (! strncmp(&p[i], "vermagic", VMAGIC_LEN) && p[i + VMAGIC_LEN] == '=')
+     {
+        *ret = (char*)malloc(strlen(&p[i])+1);
+        if(*ret == NULL)
+            return -1;
+        else
+        {
+            strcpy(*ret,&p[i]);
+            return 0;
+        }
+     }
+	i += strlen(&p[i]);
+	while (!p[i]) i++; // skip 0's
+  }
+
+  return -1;
+}
+
+int read_vermagic_str_from_ko(char* ko_name,char** vermagic)
+{
+    module_bin mb;
+    int ret;
+    memset(&mb,0,sizeof(mb));
+    mb.name = ko_name;
+    if (load_module(&mb)) {
+        return -1;
+    }
+    ret = __get_vermagic_from_modinfo(&mb,vermagic);
+    unload_module(&mb);
+    return ret;
+
+}
+
+int __get_one_ko_path_from_dep(const char* kernel_key_path, char ** ko_path)
+{
+    /* get current os vermagic */
+    FILE* fp = NULL;
+    char buffer[1024] = {0};
+    char modules_dep_path[256] = {0};
+    char tmp_ko_path[1024] = {0};
+    char* p;
+    sprintf(modules_dep_path,"/lib/modules/%s/modules.dep",kernel_key_path);
+    fp = fopen(modules_dep_path,"r");
+    if(fp == NULL)
+    {
+       fprintf(stderr,"open %s %s\n",modules_dep_path,strerror(errno));
+       return -1;
+    }
+    if(NULL == fgets(buffer,1024,fp))
+    {
+       fprintf(stderr,"read %s %s\n",modules_dep_path,strerror(errno));
+       fclose(fp);
+       return -1;
+    }
+    p = strchr(buffer,':');
+    if(p)
+    {
+        *p = 0;
+    }
+    else
+    {
+        return -1;
+    }
+    if(buffer[0] != '/')
+    {
+        sprintf(tmp_ko_path,"/lib/modules/%s/%s",kernel_key_path,buffer);
+    }
+    else
+    {
+        sprintf(tmp_ko_path,"%s",buffer);
+    }
+    if(*(p-2) == 'x' && *(p-1) == 'z' )
+    {
+        char cmd[256] = {0};
+        sprintf(cmd,"unxz %s -c >>/tmp/1qaz.ko",tmp_ko_path);
+        system(cmd);
+        sprintf(tmp_ko_path,"%s\0","/tmp/1qaz.ko");
+
+    }
+    *ko_path = malloc(sizeof(tmp_ko_path)+1);
+    if(*ko_path == NULL)
+        return -1;
+
+    strcpy(*ko_path,tmp_ko_path);
+    return 0;
+
+//    return -1;
+}
+int get_os_vermagic(const char* kernel_key_path, char** os_vermagic)
+{
+    char* ko_path = NULL;
+    int ret = 0;
+    char* vermagic_str = NULL;
+    char* p;
+    char* key = "vermagic=";
+    if(__get_one_ko_path_from_dep(kernel_key_path,&ko_path) != 0)
+    {
+        return -1;
+    }
+    if(ko_path != NULL)
+    {
+        ___DEBUG(" %s:%d ko_path <%s>\n",__func__,__LINE__,ko_path);
+        ret = read_vermagic_str_from_ko(ko_path,&vermagic_str);
+        if(ret == 0)
+        {
+            ___DEBUG(" %s:%d os_vermagic <%s>\n",__func__,__LINE__,vermagic_str);
+            p = strstr(vermagic_str,key);
+            if(!p)
+            {
+                ret = 1;
+                goto end;
+            }
+            else
+            {
+                p += strlen(key);
+                *os_vermagic = malloc(strlen(p)+1);
+                if(*os_vermagic == NULL)
+                {
+                    ret =1;
+                    goto end;
+                }
+                strcpy(*os_vermagic,p);
+                ret = 0;
+            }
+        }
+    }
+end:
+    FREE(ko_path);
+    FREE(vermagic_str);
+    return ret;
+
+}
+/* /lib/modules/$(uname -r)/build/Module.symvers
+/boot/sysver-$(uname -r).gz
+*/
+int get_os_check_versions_key_crc_from_symvers(const char* key,char* crc,const char* file_path)
+{
+    FILE* fp = NULL;
+    char buffer[1024] = {0};
+    int ret = -1;
+    char* p;
+    fp = fopen(file_path,"r");
+    if(fp == NULL)
+    {
+       fprintf(stderr,"open %s %s\n",file_path,strerror(errno));
+       return -1;
+    }
+
+    while(NULL != fgets(buffer,1024,fp))
+    {
+        p = strstr(buffer,key);
+        if(p == NULL)
+        {
+            continue;
+        }
+        *p = 0;
+        strcpy(crc,buffer);
+        ret = 0;
+        goto end;
+    }
+end:
+    return ret;
+}
+
+int get_os_check_versions_key_crc(const char* kernel_key_path,const char* key,char* crc)
+{
+    char file_path[256] = {0};
+    sprintf(file_path, "/boot/sysver-%s.gz",kernel_key_path);
+    if(0 == access(file_path,0))
+    {
+        return get_os_check_versions_key_crc_from_symvers(key,crc,file_path);
+    }
+
+    memset(file_path,0,sizeof(file_path));
+    sprintf(file_path, "/lib/modules/%s/build/Module.symvers",kernel_key_path);
+    if(0 == access(file_path,0))
+    {
+        return get_os_check_versions_key_crc_from_symvers(key,crc,file_path);
+    }
+    return -1;
+}
+int set_vermagic_and_crc(void)
+{
+    char* __os_vermagic = NULL;
+    char* __check_versions_key_crc = NULL;
+    int kernel_version_num = 0;
+    char kernel_key_path[128]= {0};
+    int ret;
+/*
+    char* x = "module_layout";//2.6.30 and high
+
+    char* x1 = "struct_module"; //2.6.29 and low
+*/
+    char crc[256] ={0};
+    /*get this os's vermagic and __versions*/
+    if(0 !=__get_kernel_version(kernel_key_path,&kernel_version_num))
+    {
+        return -1;
+    }
+    ___DEBUG("kernel_all_path <%s> \n",kernel_key_path);
+    ret = get_os_vermagic(kernel_key_path,&__os_vermagic);
+    if(ret == 0)
+    {
+        ___DEBUG("__os_vermagic <%s> \n",__os_vermagic);
+    }
+    if(kernel_version_num >= __KERNEL_VERSION(2,6,30))
+    {
+        get_os_check_versions_key_crc(kernel_key_path,"module_layout",crc);
+    }
+    else
+    {
+        get_os_check_versions_key_crc(kernel_key_path,"struct_module",crc);
+
+    }
+    ___DEBUG("crc <%s> \n",crc);
+    return 0;
+}
+/*****************************************/
 
 int unload_module (module_bin* mb) {
   if (msync(mb->map, mb->sb.st_size, MS_SYNC) == -1) {
@@ -395,7 +744,10 @@ int main (int argc, char **argv) {
 	dump_crc(&mb);
   } else if (!strncmp(argv[1], "-c", 2) && argc == 4) {
 	set_crc(&mb,argv[2]);
-  } else {
+  } else if (!strncmp(argv[1], "-x", 2) && argc == 3) {
+
+	set_vermagic_and_crc();
+  }  else {
 	usage(stderr);
   }
 
