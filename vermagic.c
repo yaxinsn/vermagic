@@ -70,6 +70,7 @@ typedef struct module_bin_info{
 char *bin = NULL;
 
 int unload_module (module_bin* mb);
+int get_os_sym_key_crc(const char* kernel_key_path,const char* key,char* crc);
 
 void usage (FILE *stream) {
   fprintf(stream,
@@ -338,13 +339,14 @@ int set_vermagic(module_bin* mb,char *ver) {
   return EXIT_SUCCESS;
 }
 /*****************************************/
-int set_check_version_key_crc (module_bin* mb,char* key, unsigned long crc) {
+int set_check_version_key_crc (const char* kernel_key_path,module_bin* mb) {
   version_t *vv;
   unsigned int vn, i = 0;
   size_t vs;
-  char *cn;
+//  char *cn;
+  char crc[16] = {0};
   unsigned long cv;
-  int flag = 0;
+//  int flag = 0;
 
   if (! (i = find_section(mb,"__versions")))
     return EXIT_FAILURE;
@@ -362,30 +364,38 @@ int set_check_version_key_crc (module_bin* mb,char* key, unsigned long crc) {
   }
   // number of modversion entry
   vn = vs / sizeof(version_t);
-
+#if 0
   //formalize(crc, &cn, &cv);
-  cn = key;
-  cv = crc;
   if (strlen(cn) + 1 > MODULE_NAME_LEN) {
     fprintf(stderr, "Size of new crc name can not beyond %ld\n",
             MODULE_NAME_LEN);
     return EXIT_FAILURE;
   }
+#endif
   //
   for (i = 0; i < vn; i++) {
-    if (! strcmp(vv[i].name, cn)) {
-      flag = 1;
-      printf("{-}Old value => %s:\t\t 0X%lX\n", vv[i].name, vv[i].crc);
-      //memcpy(vv[i].name, cn, strlen(cn));
-      //vv[i].name[strlen(cn)] = 0;
+
+
+      ___DEBUG("{-}Old value => %s:\t\t 0X%lX\n", vv[i].name, vv[i].crc);
+      memset(crc,0,sizeof(crc));
+      if(0 ==get_os_sym_key_crc(kernel_key_path,vv[i].name,crc))
+      {
+          cv = strtoul(crc,NULL,16);
+          if(cv != 0)
+          {
       vv[i].crc = cv;
-      printf("{+}New value => %s:\t\t 0X%lX\n", vv[i].name, vv[i].crc);
-      break;
+            ___DEBUG("{+}New value => %s:\t\t 0X%lX crc <%s>\n", vv[i].name, vv[i].crc,crc);
+          }
+          else
+          {
+            fprintf(stderr,"Cant not fine any crc-name %s\n",vv[i].name);
     }
   }
-
-  if (flag == 0)
-    fprintf(stderr, "Can not find any crc-name : %s", cn);
+      else
+      {
+        fprintf(stderr,"Cant not fine any crc-name %s\n",vv[i].name);
+      }
+  }
 
   return EXIT_SUCCESS;
 }
@@ -524,6 +534,7 @@ int __get_one_ko_path_from_dep(const char* kernel_key_path, char ** ko_path)
     }
     else
     {
+        fclose(fp);
         return -1;
     }
     if(buffer[0] != '/')
@@ -544,9 +555,12 @@ int __get_one_ko_path_from_dep(const char* kernel_key_path, char ** ko_path)
     }
     *ko_path = malloc(sizeof(tmp_ko_path)+1);
     if(*ko_path == NULL)
+    {
+        fclose(fp);
         return -1;
-
+    }
     strcpy(*ko_path,tmp_ko_path);
+    fclose(fp);
     return 0;
 
 //    return -1;
@@ -598,12 +612,14 @@ end:
 /* /lib/modules/$(uname -r)/build/Module.symvers
 /boot/sysver-$(uname -r).gz
 */
-int get_os_check_versions_key_crc_from_symvers(const char* key,char* crc,const char* file_path)
+int get_os_sym_key_crc_from_symvers(const char* key,char* crc,const char* file_path)
 {
     FILE* fp = NULL;
     char buffer[1024] = {0};
     int ret = -1;
+    char new_key[128] = {0};
     char* p;
+    sprintf(new_key,"\t%s\t",key);
     fp = fopen(file_path,"r");
     if(fp == NULL)
     {
@@ -613,38 +629,39 @@ int get_os_check_versions_key_crc_from_symvers(const char* key,char* crc,const c
 
     while(NULL != fgets(buffer,1024,fp))
     {
-        p = strstr(buffer,key);
+        p = strstr(buffer,new_key);
         if(p == NULL)
         {
             continue;
         }
         *p = 0;
-        strcpy(crc,buffer);
+        strncpy(crc,buffer,10);
         ret = 0;
         goto end;
     }
 end:
+    fclose(fp);
     return ret;
 }
 
-int get_os_check_versions_key_crc(const char* kernel_key_path,const char* key,char* crc)
+int get_os_sym_key_crc(const char* kernel_key_path,const char* key,char* crc)
 {
     char file_path[256] = {0};
     sprintf(file_path, "/boot/sysver-%s.gz",kernel_key_path);
     if(0 == access(file_path,0))
     {
-        return get_os_check_versions_key_crc_from_symvers(key,crc,file_path);
+        return get_os_sym_key_crc_from_symvers(key,crc,file_path);
     }
 
     memset(file_path,0,sizeof(file_path));
     sprintf(file_path, "/lib/modules/%s/build/Module.symvers",kernel_key_path);
     if(0 == access(file_path,0))
     {
-        return get_os_check_versions_key_crc_from_symvers(key,crc,file_path);
+        return get_os_sym_key_crc_from_symvers(key,crc,file_path);
     }
     return -1;
 }
-int __set_vermagic_and_crc_to_ko_file(char* name,char* os_vermagic,char* key, unsigned long ul_crc)
+int __set_vermagic(char* name,char* os_vermagic)
 {
 
     module_bin mb;
@@ -654,11 +671,22 @@ int __set_vermagic_and_crc_to_ko_file(char* name,char* os_vermagic,char* key, un
     if (load_module(&mb)) {
         return -1;
     }
-    ret = set_check_version_key_crc(&mb,key,ul_crc);
-    if(ret == 0)
+    ret = set_vermagic(&mb, os_vermagic);
+
+    unload_module(&mb);
+    return ret;
+}
+int __update_crc_to_ko_file(const char* kernel_key_path,char* name)
     {
-        ret = set_vermagic(&mb, os_vermagic);
+
+    module_bin mb;
+    int ret;
+    memset(&mb,0,sizeof(mb));
+    mb.name = name;
+    if (load_module(&mb)) {
+        return -1;
     }
+    ret = set_check_version_key_crc(kernel_key_path, &mb);
     unload_module(&mb);
     return ret;
 
@@ -671,14 +699,14 @@ int set_vermagic_and_crc(char* name)
     int kernel_version_num = 0;
     char kernel_key_path[128]= {0};
     int ret;
-    unsigned long ul_crc = 0;
-    char * key;
+//    unsigned long ul_crc = 0;
+//    char * key;
 /*
     char* x = "module_layout";//2.6.30 and high
 
     char* x1 = "struct_module"; //2.6.29 and low
 */
-    char crc[256] ={0};
+//    char crc[256] ={0};
     /*get this os's vermagic and __versions*/
     if(0 !=__get_kernel_version(kernel_key_path,&kernel_version_num))
     {
@@ -690,20 +718,10 @@ int set_vermagic_and_crc(char* name)
     {
         ___DEBUG("__os_vermagic <%s> \n",__os_vermagic);
     }
-    if(kernel_version_num >= __KERNEL_VERSION(2,6,30))
-    {
-        key = "module_layout";
-    }
-    else
-    {
-        key = "struct_module";
-    }
-     get_os_check_versions_key_crc(kernel_key_path,key,crc);
-     ul_crc = strtoul(crc,NULL,16);
-    ___DEBUG("%s crc <%s> ul_crc 0x%lx \n",key, crc,ul_crc);
+    __set_vermagic(name,__os_vermagic);
 
     /* set to the ko. */
-    ret =  __set_vermagic_and_crc_to_ko_file(name,__os_vermagic,key,ul_crc);
+    ret =  __update_crc_to_ko_file(kernel_key_path,name);
     if(ret)
     {
         fprintf(stderr,"fail: set vermaagic and crc \n");
